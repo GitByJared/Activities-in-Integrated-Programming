@@ -1,0 +1,39 @@
+<?php
+header("Access-Control-Allow-Origin: *");
+header("Access-Control-Allow-Methods: GET");
+header("Content-Type: application/json; charset=UTF-8");
+
+
+$servername = "localhost";
+$username   = "Jared2004";
+$password   = "277353";
+$dbname     = "dbapitest";  
+$port       = 3308;        
+
+$conn = new mysqli($servername, $username, $password, $dbname,$port);
+
+if ($conn->connect_error) {
+ die(json_encode(["status" => "error", "message" => "Connection failed: " . $conn->connect_error]));
+}
+
+$data = json_decode(file_get_contents("php://input"), true);
+
+if (!empty($data["name"]) && !empty($data["value"])) {
+ $name = $conn->real_escape_string($data["name"]);
+ $surname = $conn->real_escape_string($data["surname"]);
+ $value = $conn->real_escape_string($data["value"]);
+
+ $sql = "INSERT INTO test (name,surname, value) VALUES ('$name','$surname', '$value')";
+
+ if ($conn->query($sql) === TRUE) {
+ echo json_encode(["status" => "success", "message" => "test data added successfully"]);
+ } else {
+ echo json_encode(["status" => "error", "message" => "Error: " . $conn->error]);
+ }
+} else {
+ echo json_encode(["status" => "error", "message" => "Invalid input"]);
+}
+
+$conn->close();
+
+?>
