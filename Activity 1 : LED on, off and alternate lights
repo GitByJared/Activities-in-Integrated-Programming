@@ -4,42 +4,51 @@
 const char* ssid = "Jared";
 const char* password = "87654321";
 
-// Define LED pins
-const int ledPin1 = 19;  // LED 1
+const int ledPin1 = 19;  // LED 1 (top)
 const int ledPin2 = 18;  // LED 2
-const int ledPin3 = 5;  // LED 3
+const int ledPin3 = 5;   // LED 3 (center)
 const int ledPin4 = 17;  // LED 4
-const int ledPin5 = 16;  // LED 5
+const int ledPin5 = 16;  // LED 5 (bottom)
 
 WebServer server(80);
 
-// Variables for non-blocking alternate routine
-bool alternateAllActive = false;  // flag to control alternating mode
+
+bool alternateAllActive = false; 
 unsigned long previousMillis = 0;
-const unsigned long interval = 300;  // Interval (ms) for switching patterns
-bool patternA = true;  // start with pattern A
+const unsigned long interval = 300; 
+bool patternA = true;  
+
+
+bool centerActive = false;     
+unsigned long centerPreviousMillis = 0;
+const unsigned long centerInterval = 300;
+const int centerSequence[] = { ledPin3, ledPin4, ledPin5, ledPin2, ledPin1 };
+const int sequenceSteps = sizeof(centerSequence) / sizeof(centerSequence[0]);
+int currentStep = 0;          
+int sequenceDirection = 1;   
 
 void handleRoot() {
-  // HTML content with buttons
+  // HTML content with buttons (existing plus new button for center pattern)
   String html = "<!DOCTYPE html><html><head><title>ESP32 LED Control</title></head><body>";
   html += "<h1>ESP32 LED Control</h1>";
   html += "<button onclick=\"fetch('/off').then(response => alert('LED OFF!'))\">Turn LED OFF</button><br>";
-  html += "<button onclick=\"fetch('/allon').then(response => alert('All LEDs ON!'))\">Turn ALL LEDs ON</button><br>";
+  html += "<button onclick=\"fetch('/allon').then(response => alert('All LEDs ON!'))\">Turn ALL LEDs ON!</button><br>";
   html += "<button onclick=\"fetch('/alternateall').then(response => alert('Alternating All LEDs!'))\">Alternate All LEDs</button><br>";
+  html += "<button onclick=\"fetch('/center').then(response => alert('Center-to-Bottom Versa Activated!'))\">Center-to-Bottom Versa</button><br>";
   html += "</body></html>";
   
   server.send(200, "text/html", html);
 }
 
 void handleOn() {
-  // If you want to control a single LED:
   digitalWrite(ledPin1, HIGH);
   server.send(200, "text/plain", "LED is ON");
 }
 
 void handleOff() {
-  // Turn off alternating routine (if running) and all LEDs.
+  // Turn off all alternating routines and all LEDs.
   alternateAllActive = false;
+  centerActive = false;
   
   digitalWrite(ledPin1, LOW);
   digitalWrite(ledPin2, LOW);
@@ -51,8 +60,9 @@ void handleOff() {
 }
 
 void handleAllOn() {
-  // Turn off alternating routine (if running) and turn on all LEDs.
+  // Turn off alternating routines and turn on all LEDs.
   alternateAllActive = false;
+  centerActive = false;
   
   digitalWrite(ledPin1, HIGH);
   digitalWrite(ledPin2, HIGH);
@@ -64,12 +74,23 @@ void handleAllOn() {
 }
 
 void handleAlternateAll() {
-  // Start alternating mode. The routine in loop() will handle the switching.
   alternateAllActive = true;
-  previousMillis = millis();  // reset timer
-  patternA = true;             // start with Pattern A
+  centerActive = false;  
+  previousMillis = millis();  
+  patternA = true;             
   
   server.send(200, "text/plain", "Starting continuous alternating routine on all LEDs");
+}
+
+void handleCenter() {
+ 
+  centerActive = true;
+  alternateAllActive = false;  
+  centerPreviousMillis = millis(); 
+  currentStep = 0;            
+  sequenceDirection = 1;      
+  
+  server.send(200, "text/plain", "Starting center-to-bottom versa routine on all LEDs");
 }
 
 void setup() {
@@ -101,7 +122,8 @@ void setup() {
   server.on("/off", handleOff);
   server.on("/allon", handleAllOn);
   server.on("/alternateall", handleAlternateAll);
-
+  server.on("/center", handleCenter);  // new endpoint for center-to-bottom versa
+  
   server.begin();
   Serial.println("HTTP server started");
 }
@@ -109,7 +131,6 @@ void setup() {
 void loop() {
   server.handleClient();
   
-  // Handle non-blocking alternating routine
   if (alternateAllActive) {
     unsigned long currentMillis = millis();
     if (currentMillis - previousMillis >= interval) {
@@ -131,8 +152,32 @@ void loop() {
         digitalWrite(ledPin5, LOW);
       }
       
-      // Toggle the pattern for next interval
       patternA = !patternA;
+    }
+  }
+  
+  if (centerActive) {
+    unsigned long currentMillis = millis();
+    if (currentMillis - centerPreviousMillis >= centerInterval) {
+      centerPreviousMillis = currentMillis;
+      
+      digitalWrite(ledPin1, LOW);
+      digitalWrite(ledPin2, LOW);
+      digitalWrite(ledPin3, LOW);
+      digitalWrite(ledPin4, LOW);
+      digitalWrite(ledPin5, LOW);
+      
+      digitalWrite(centerSequence[currentStep], HIGH);
+      
+      currentStep += sequenceDirection;
+      
+      if (currentStep >= sequenceSteps) {
+        currentStep = sequenceSteps - 2; // step back into range
+        sequenceDirection = -1;
+      } else if (currentStep < 0) {
+        currentStep = 1; // step forward into range
+        sequenceDirection = 1;
+      }
     }
   }
 }
