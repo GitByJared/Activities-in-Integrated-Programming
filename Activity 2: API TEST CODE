@@ -7,7 +7,7 @@ header("Content-Type: application/json; charset=UTF-8");
 $servername = "localhost";
 $username   = "Jared2004";
 $password   = "277353";
-$dbname     = "dbapitest";  
+$dbname     = "integ1";  
 $port       = 3308;        
 
 $conn = new mysqli($servername, $username, $password, $dbname,$port);
@@ -18,12 +18,14 @@ if ($conn->connect_error) {
 
 $data = json_decode(file_get_contents("php://input"), true);
 
-if (!empty($data["name"]) && !empty($data["value"])) {
+if (!empty($data["name"]) && !empty($data["email"])&& !empty($data["age"])&& !empty($data["gender"])&& !empty($data["address"])) {
  $name = $conn->real_escape_string($data["name"]);
- $surname = $conn->real_escape_string($data["surname"]);
- $value = $conn->real_escape_string($data["value"]);
+ $email = $conn->real_escape_string($data["email"]);
+ $age = $conn->real_escape_string($data["age"]);
+ $gender = $conn->real_escape_string($data["gender"]);
+ $address = $conn->real_escape_string($data["address"]);
 
- $sql = "INSERT INTO test (name,surname, value) VALUES ('$name','$surname', '$value')";
+ $sql = "INSERT INTO information (name,email,age,gender, address) VALUES ('$name','$email','$age', '$gender','$address')";
 
  if ($conn->query($sql) === TRUE) {
  echo json_encode(["status" => "success", "message" => "test data added successfully"]);
