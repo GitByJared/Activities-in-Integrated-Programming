@@ -1,0 +1,2087 @@
+MAGNAYE  ZEUS JARED A. 
+
+BSIT 2F3 
+
+ 
+
+UART 
+
+ 
+
+ 
+
+ESP32 code[Text Wrapping Break][Text Wrapping Break]#include <WiFi.h> 
+
+#include <Firebase_ESP_Client.h> 
+
+#include <time.h> 
+
+ 
+
+// Wi-Fi credentials 
+
+const char* ssid = "jared"; 
+
+const char* password = "12345678"; 
+
+ 
+
+// Firebase credentials 
+
+#define API_KEY "AIzaSyBlagWot02c8JxVZbQi2LoG-bmEXmRR1qY" 
+
+#define DATABASE_URL "https://tnpfinals-default-rtdb.firebaseio.com" 
+
+ 
+
+// ESP32 device ID 
+
+#define DEVICE_ID "esp32-001" 
+
+#define SENSOR_PATH "/racks/status" 
+
+ 
+
+FirebaseData fbdo; 
+
+FirebaseAuth auth; 
+
+FirebaseConfig config; 
+
+ 
+
+unsigned long lastSend = 0; 
+
+const unsigned long interval = 5000; 
+
+bool isTimeSynced = false; 
+
+ 
+
+HardwareSerial ArduinoSerial(2); // RX2 = GPIO16 (for reading from Uno TX) 
+
+String sensorStatus = ""; 
+
+ 
+
+void syncTime() { 
+
+  Serial.println("⌛ Syncing NTP time..."); 
+
+  configTime(0, 0, "time.google.com", "pool.ntp.org"); 
+
+ 
+
+  int attempts = 0; 
+
+  while (time(nullptr) < 100000 && attempts < 30) { 
+
+    delay(500); 
+
+    Serial.print("."); 
+
+    attempts++; 
+
+  } 
+
+ 
+
+  time_t now = time(nullptr); 
+
+  if (now >= 100000) { 
+
+    Serial.println("\n⏰ NTP time synced: " + String(now)); 
+
+    isTimeSynced = true; 
+
+  } else { 
+
+    Serial.println("\n❌ Time sync failed. Check Wi-Fi or NTP access."); 
+
+    isTimeSynced = false; 
+
+  } 
+
+} 
+
+ 
+
+void setup() { 
+
+  Serial.begin(115200); 
+
+  Serial.println("📟 Booting..."); 
+
+ 
+
+  WiFi.begin(ssid, password); 
+
+  Serial.print("📡 Connecting to Wi-Fi"); 
+
+  while (WiFi.status() != WL_CONNECTED) { 
+
+    delay(500); 
+
+    Serial.print("."); 
+
+  } 
+
+  Serial.println("\n✅ Wi-Fi connected"); 
+
+ 
+
+  syncTime(); 
+
+ 
+
+  config.api_key = API_KEY; 
+
+  config.database_url = DATABASE_URL; 
+
+  auth.user.email = ""; 
+
+  auth.user.password = ""; 
+
+ 
+
+  Firebase.begin(&config, &auth); 
+
+  Firebase.reconnectWiFi(true); 
+
+ 
+
+  if (Firebase.signUp(&config, &auth, "", "")) { 
+
+    Serial.println("✅ Firebase anonymous sign-up successful"); 
+
+  } else { 
+
+    Serial.printf("❌ Firebase sign-up failed: %s\n", config.signer.signupError.message.c_str()); 
+
+  } 
+
+ 
+
+  ArduinoSerial.begin(9600, SERIAL_8N1, 16, 17); // RX=16 (from Uno TX), TX unused 
+
+ 
+
+  delay(1000); 
+
+} 
+
+ 
+
+void loop() { 
+
+  // Always read incoming serial data from Arduino 
+
+  while (ArduinoSerial.available()) { 
+
+    sensorStatus = ArduinoSerial.readStringUntil('\n'); 
+
+    sensorStatus.trim(); // Clean input 
+
+    Serial.println("📥 Received from Arduino: " + sensorStatus); 
+
+  } 
+
+ 
+
+  // Only send to Firebase every 5 seconds 
+
+  if (millis() - lastSend >= interval) { 
+
+    lastSend = millis(); 
+
+ 
+
+    if (!isTimeSynced) { 
+
+      syncTime(); 
+
+    } 
+
+ 
+
+    if (isTimeSynced) { 
+
+      time_t now = time(nullptr); 
+
+      String devicePath = "/devices/" + String(DEVICE_ID); 
+
+ 
+
+      // Update lastSeen (timestamp) 
+
+      bool successTimestamp = Firebase.ready() && 
+
+        Firebase.RTDB.setInt(&fbdo, devicePath + "/lastSeen", now); 
+
+ 
+
+      // Update status ("ONLINE") 
+
+      bool successStatus = Firebase.ready() && 
+
+        Firebase.RTDB.setString(&fbdo, devicePath + "/status", "ONLINE"); 
+
+ 
+
+      if (successTimestamp && successStatus) { 
+
+        Serial.println("✅ ONLINE - Data updated: " + String(now)); 
+
+      } else { 
+
+        Serial.println("❌ OFFLINE - Firebase error: " + fbdo.errorReason()); 
+
+      } 
+
+ 
+
+      // Send latest sensor status 
+
+      if (sensorStatus.indexOf("OCCUPIED") >= 0) { 
+
+        Firebase.RTDB.setString(&fbdo, SENSOR_PATH, "OCCUPIED"); 
+
+        Serial.println("✅ Sensor status uploaded: OCCUPIED"); 
+
+      } else if (sensorStatus.indexOf("AVAILABLE") >= 0) { 
+
+        Firebase.RTDB.setString(&fbdo, SENSOR_PATH, "AVAILABLE"); 
+
+        Serial.println("✅ Sensor status uploaded: AVAILABLE"); 
+
+      } else { 
+
+        Serial.println("⚠️ No valid sensor status to upload."); 
+
+      } 
+
+    } else { 
+
+      Serial.println("⚠️ Skipping Firebase write: NTP time not available."); 
+
+    } 
+
+  } 
+
+} 
+
+ 
+
+ARDUINO UNO CODE FOR SENSOR 
+
+ 
+
+const int trigPin = 10; 
+
+const int echoPin = 9; 
+
+const int threshold = 50; // cm — if object is within 50 cm, slot is occupied 
+
+ 
+
+void setup() { 
+
+  Serial.begin(9600); 
+
+  pinMode(trigPin, OUTPUT); 
+
+  pinMode(echoPin, INPUT); 
+
+} 
+
+ 
+
+void loop() { 
+
+  long duration; 
+
+  int distance; 
+
+ 
+
+  // Send ultrasonic pulse 
+
+  digitalWrite(trigPin, LOW); 
+
+  delayMicroseconds(2); 
+
+  digitalWrite(trigPin, HIGH); 
+
+  delayMicroseconds(10); 
+
+  digitalWrite(trigPin, LOW); 
+
+ 
+
+  // Read the echo time 
+
+  duration = pulseIn(echoPin, HIGH); 
+
+ 
+
+  // Convert to cm 
+
+  distance = duration * 0.034 / 2; 
+
+ 
+
+  // Send clean status to ESP32 
+
+  if (distance < threshold) { 
+
+    Serial.println("OCCUPIED"); 
+
+  } else { 
+
+    Serial.println("AVAILABLE"); 
+
+  } 
+
+ 
+
+  delay(1000); // wait 1 second before next read 
+
+} 
+
+ 
+
+ 
+
+HOME.VUE CODE 
+
+ 
+
+<template> 
+
+  <v-app> 
+
+    <v-main> 
+
+      <v-container fluid class="home-container"> 
+
+        <!-- Top Section --> 
+
+        <v-row dense justify="space-between" align="stretch"> 
+
+          <!-- Batches Completed --> 
+
+          <v-col cols="12" md="4" class="d-flex"> 
+
+            <v-card class="dashboard-card flex-grow-1"> 
+
+              <v-card-title class="card-title">Batches Completed</v-card-title> 
+
+              <v-card-text class="text-center"> 
+
+                <div class="text-h3 font-weight-bold text-teal">{{ batchesCompleted }}</div> 
+
+                <div class="text-caption muted">Successful batches today</div> 
+
+              </v-card-text> 
+
+            </v-card> 
+
+          </v-col> 
+
+ 
+
+          <!-- Smoke Sensor --> 
+
+          <v-col cols="12" md="4" class="d-flex"> 
+
+            <v-card class="dashboard-card flex-grow-1"> 
+
+              <v-card-title class="card-title"> 
+
+                <v-icon left class="mr-2" color="teal darken-2">mdi-cloud</v-icon> 
+
+                Smoke Remaining 
+
+              </v-card-title> 
+
+              <v-card-text class="text-center"> 
+
+                <v-progress-circular 
+
+                  :model-value="smokeValue" 
+
+                  size="120" 
+
+                  width="10" 
+
+                  color="teal" 
+
+                  rotate="360" 
+
+                > 
+
+                  {{ smokeValue }}% 
+
+                </v-progress-circular> 
+
+                <div class="text-caption mt-3 muted">Status: Sufficient</div> 
+
+                <v-progress-linear 
+
+                  class="mt-4" 
+
+                  color="teal" 
+
+                  height="6" 
+
+                  rounded 
+
+                  :model-value="smokeValue" 
+
+                ></v-progress-linear> 
+
+                <div class="text-caption mt-4 font-weight-medium"> 
+
+                  Main Sensor Status: Sufficient 
+
+                </div> 
+
+              </v-card-text> 
+
+            </v-card> 
+
+          </v-col> 
+
+ 
+
+          <!-- Batch In Process --> 
+
+          <v-col cols="12" md="4" class="d-flex"> 
+
+            <v-card class="dashboard-card flex-grow-1"> 
+
+              <v-card-title class="card-title">Batch In Process</v-card-title> 
+
+              <v-card-text class="text-center"> 
+
+                <div class="text-h5 text-teal mb-2">Slots:</div> 
+
+                <div class="mb-4">{{ selectedSlots.map(s => `Slot ${s + 1}`).join(', ') || 'None' }}</div> 
+
+ 
+
+                <v-text-field 
+
+                  v-model.number="inputMinutes" 
+
+                  type="number" 
+
+                  label="Set Timer (minutes)" 
+
+                  min="1" 
+
+                  max="180" 
+
+                  outlined 
+
+                  dense 
+
+                  class="mb-3" 
+
+                ></v-text-field> 
+
+ 
+
+                <div> 
+
+                  <div class="text-caption muted">Time Remaining</div> 
+
+                  <div class="text-h5 font-weight-bold text-teal">{{ formattedCountdown }}</div> 
+
+                </div> 
+
+                <div class="d-flex justify-center mt-4"> 
+
+                  <v-btn @click="startTimer" class="mr-4" color="teal" text dark rounded :disabled="timerRunning"> 
+
+                    Start 
+
+                  </v-btn> 
+
+                  <v-btn @click="stopTimer" color="teal" text dark rounded :disabled="!timerRunning"> 
+
+                    Stop 
+
+                  </v-btn> 
+
+                </div> 
+
+              </v-card-text> 
+
+            </v-card> 
+
+          </v-col> 
+
+        </v-row> 
+
+ 
+
+        <!-- Time's Up Dialog --> 
+
+        <v-dialog v-model="timeUpDialog" max-width="400"> 
+
+          <v-card> 
+
+            <v-card-title class="text-h6 font-weight-bold">Time's Up!</v-card-title> 
+
+            <v-card-text>Your batch timer has ended. Please take the necessary action.</v-card-text> 
+
+            <v-card-actions> 
+
+              <v-spacer></v-spacer> 
+
+              <v-btn color="teal" text @click="acknowledgeTimeUp">OK</v-btn> 
+
+            </v-card-actions> 
+
+          </v-card> 
+
+        </v-dialog> 
+
+ 
+
+        <!-- Slot Selection Dialog --> 
+
+        <v-dialog v-model="showSlotDialog" max-width="500"> 
+
+          <v-card> 
+
+            <v-card-title class="text-h6 font-weight-bold">Select Available Slots</v-card-title> 
+
+            <v-card-text> 
+
+              <v-checkbox 
+
+                v-for="(slot, index) in availableSlots" 
+
+                :key="index" 
+
+                :label="`Slot ${index + 1}`" 
+
+                :value="index" 
+
+                v-model="selectedSlots" 
+
+                :disabled="!slot" 
+
+              ></v-checkbox> 
+
+              <div class="mt-3 text-caption muted">You may select up to 4 slots.</div> 
+
+            </v-card-text> 
+
+            <v-card-actions> 
+
+              <v-spacer></v-spacer> 
+
+              <v-btn color="teal" text @click="showSlotDialog = false">Cancel</v-btn> 
+
+              <v-btn 
+
+                color="teal" 
+
+                text 
+
+                :disabled="selectedSlots.length === 0 || selectedSlots.length > 4" 
+
+                @click="confirmSlotSelection" 
+
+              > 
+
+                Confirm 
+
+              </v-btn> 
+
+            </v-card-actions> 
+
+          </v-card> 
+
+        </v-dialog> 
+
+      </v-container> 
+
+    </v-main> 
+
+  </v-app> 
+
+</template> 
+
+ 
+
+<script setup> 
+
+defineOptions({ name: 'Home' }) 
+
+ 
+
+import { ref, computed, onMounted } from 'vue' 
+
+import { getDatabase, ref as dbRef, onValue } from 'firebase/database' 
+
+import { getFirestore, collection, addDoc, Timestamp } from 'firebase/firestore' 
+
+ 
+
+// Dashboard states 
+
+const smokeValue = ref(90) 
+
+const rackSensors = ref([true, false, true, true, false]) 
+
+const notifications = ref([ 
+
+  { title: 'Batch 3 completed successfully.', time: '2 minutes ago' }, 
+
+  { title: 'Rack 2 sensor status: Available.', time: '10 minutes ago' }, 
+
+  { title: 'Smoke level optimal.', time: '15 minutes ago' }, 
+
+]) 
+
+ 
+
+const batchesCompleted = ref(0) 
+
+const inputMinutes = ref(20) 
+
+const secondsLeft = ref(0) 
+
+const timerRunning = ref(false) 
+
+const timeUpDialog = ref(false) 
+
+ 
+
+let timerInterval = null 
+
+ 
+
+const formattedCountdown = computed(() => { 
+
+  const h = String(Math.floor(secondsLeft.value / 3600)).padStart(2, '0') 
+
+  const m = String(Math.floor((secondsLeft.value % 3600) / 60)).padStart(2, '0') 
+
+  const s = String(secondsLeft.value % 60).padStart(2, '0') 
+
+  return `${h}:${m}:${s}` 
+
+}) 
+
+ 
+
+const showSlotDialog = ref(false) 
+
+const availableSlots = ref([true, true, true, true]) 
+
+const selectedSlots = ref([]) 
+
+ 
+
+const confirmSlotSelection = () => { 
+
+  showSlotDialog.value = false 
+
+} 
+
+ 
+
+const db = getFirestore() 
+
+ 
+
+async function saveBatchToFirestore() { 
+
+  if (selectedSlots.value.length === 0) return 
+
+  try { 
+
+    const batchData = { 
+
+      batchId: `batch-${Date.now()}`, 
+
+      items: selectedSlots.value.map(s => `Slot ${s + 1}`), 
+
+      startTime: Timestamp.fromDate(new Date(Date.now() - inputMinutes.value * 60 * 1000)), 
+
+      endTime: Timestamp.fromDate(new Date()), 
+
+      duration: `${inputMinutes.value} mins`, 
+
+      status: 'Completed' 
+
+    } 
+
+    await addDoc(collection(db, 'batches'), batchData) 
+
+    console.log('Batch saved to Firestore:', batchData) 
+
+  } catch (error) { 
+
+    console.error('Error saving batch:', error) 
+
+  } 
+
+} 
+
+ 
+
+const acknowledgeTimeUp = async () => { 
+
+  timeUpDialog.value = false 
+
+  batchesCompleted.value += 1 
+
+  await saveBatchToFirestore() 
+
+  selectedSlots.value = [] 
+
+} 
+
+ 
+
+const startTimer = () => { 
+
+  if (inputMinutes.value <= 0 || selectedSlots.value.length === 0) return 
+
+  secondsLeft.value = inputMinutes.value * 60 
+
+  timerRunning.value = true 
+
+  clearInterval(timerInterval) 
+
+  timerInterval = setInterval(() => { 
+
+    if (secondsLeft.value > 0) { 
+
+      secondsLeft.value-- 
+
+    } else { 
+
+      clearInterval(timerInterval) 
+
+      timerRunning.value = false 
+
+      timeUpDialog.value = true 
+
+      secondsLeft.value = 0 
+
+    } 
+
+  }, 1000) 
+
+} 
+
+ 
+
+const stopTimer = () => { 
+
+  clearInterval(timerInterval) 
+
+  timerRunning.value = false 
+
+} 
+
+ 
+
+onMounted(() => { 
+
+  const dbRT = getDatabase() 
+
+  const rackStatusRef = dbRef(dbRT, '/racks/status') 
+
+  onValue(rackStatusRef, (snapshot) => { 
+
+    const status = snapshot.val() 
+
+    if (status === 'OCCUPIED') { 
+
+      showSlotDialog.value = true 
+
+    } 
+
+  }) 
+
+}) 
+
+</script> 
+
+ 
+
+/* your CSS is untouched */ 
+
+<style scoped> 
+
+.home-container { 
+
+  padding-top: 48px; 
+
+  padding-bottom: 48px; 
+
+  background: linear-gradient(135deg, #f0f4f8, #ffffff); 
+
+} 
+
+ 
+
+.dashboard-card { 
+
+  border-radius: 12px; 
+
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1); 
+
+  background-color: #ffffff; 
+
+  padding: 20px; 
+
+  display: flex; 
+
+  flex-direction: column; 
+
+  justify-content: space-between; 
+
+  transition: transform 0.2s ease, box-shadow 0.2s ease; 
+
+} 
+
+ 
+
+.dashboard-card:hover { 
+
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15); 
+
+  transform: translateY(-5px); 
+
+} 
+
+ 
+
+.card-title { 
+
+  font-size: 18px; 
+
+  font-weight: 600; 
+
+  color: #333; 
+
+  display: flex; 
+
+  align-items: center; 
+
+} 
+
+ 
+
+.muted { 
+
+  color: #777; 
+
+} 
+
+ 
+
+.rack-sensor-item, 
+
+.notification-item { 
+
+  padding: 12px; 
+
+  background-color: #f9fafb; 
+
+  border-radius: 8px; 
+
+  margin-bottom: 8px; 
+
+  transition: background-color 0.2s ease; 
+
+} 
+
+ 
+
+.rack-sensor-item:hover, 
+
+.notification-item:hover { 
+
+  background-color: #e0f7fa; 
+
+} 
+
+ 
+
+.sensor-title { 
+
+  font-size: 16px; 
+
+  font-weight: 500; 
+
+} 
+
+ 
+
+.sensor-status { 
+
+  font-size: 14px; 
+
+  display: flex; 
+
+  align-items: center; 
+
+} 
+
+ 
+
+.status-icon { 
+
+  margin-right: 8px; 
+
+} 
+
+ 
+
+.notification-title { 
+
+  font-size: 15px; 
+
+  font-weight: 600; 
+
+  color: #333; 
+
+} 
+
+ 
+
+.notification-time { 
+
+  font-size: 13px; 
+
+  color: #777; 
+
+  margin-top: 4px; 
+
+} 
+
+ 
+
+.rack-sensor-card, 
+
+.notification-card { 
+
+  max-height: 450px; 
+
+  overflow-y: auto; 
+
+} 
+
+</style> 
+
+ 
+
+ 
+
+DEVICE.VUE 
+
+ 
+
+<template> 
+
+  <v-app> 
+
+    <v-main> 
+
+      <v-container fluid class="pa-8" style="background-color: #E1F5FE; min-height: 100vh;"> 
+
+        <v-card class="mt-4"> 
+
+          <v-card-title class="text-h6 font-weight-bold text-teal">Device Management</v-card-title> 
+
+ 
+
+          <v-row> 
+
+            <v-col cols="12" sm="6" md="4"> 
+
+              <v-text-field 
+
+                v-model="search" 
+
+                label="Search Devices" 
+
+                class="search-input mb-4" 
+
+                outlined 
+
+                dense 
+
+                hide-details 
+
+              ></v-text-field> 
+
+            </v-col> 
+
+          </v-row> 
+
+ 
+
+          <div class="table-scroll"> 
+
+            <v-data-table 
+
+              :headers="headers" 
+
+              :items="filteredDevices" 
+
+              :loading="loading" 
+
+              class="elevation-1" 
+
+              item-value="id" 
+
+              dense 
+
+            > 
+
+              <template v-slot:[`item.status`]="{ item }"> 
+
+                <v-chip :color="getStatusColor(item.status)" text-color="white" small class="ma-1"> 
+
+                  {{ item.status }} 
+
+                </v-chip> 
+
+              </template> 
+
+ 
+
+              <template v-slot:no-data> 
+
+                <v-alert type="info" color="blue lighten-4" text> 
+
+                  No registered devices found. 
+
+                </v-alert> 
+
+              </template> 
+
+            </v-data-table> 
+
+          </div> 
+
+        </v-card> 
+
+      </v-container> 
+
+    </v-main> 
+
+  </v-app> 
+
+</template> 
+
+ 
+
+<script setup> 
+
+import { ref, computed, onMounted } from 'vue' 
+
+import { rtdb } from '@/firebase' // ✅ Use exported Realtime DB from firebase.js 
+
+import { ref as dbRef, onValue } from 'firebase/database' 
+
+ 
+
+const headers = [ 
+
+  { title: 'Device ID', key: 'id' }, 
+
+  { title: 'Device Name', key: 'name' }, 
+
+  { title: 'Status', key: 'status' } 
+
+] 
+
+ 
+
+const devices = ref([]) 
+
+const search = ref('') 
+
+const loading = ref(true) 
+
+ 
+
+const fetchDevices = () => { 
+
+  const devicesRef = dbRef(rtdb, '/devices') // ✅ Use Realtime Database correctly 
+
+ 
+
+  onValue(devicesRef, (snapshot) => { 
+
+    const data = snapshot.val() 
+
+    const now = Date.now() 
+
+ 
+
+    if (data) { 
+
+      devices.value = Object.keys(data).map(id => { 
+
+        const device = data[id] 
+
+        const lastSeen = parseInt(device.lastSeen) * 1000 || 0 // ✅ Use lastSeen and convert to ms 
+
+        const isOnline = now - lastSeen < 60000 // ✅ 60-second window 
+
+ 
+
+        return { 
+
+          id, 
+
+          ...device, 
+
+          status: isOnline ? 'online' : 'offline' 
+
+        } 
+
+      }) 
+
+    } else { 
+
+      devices.value = [] 
+
+    } 
+
+    loading.value = false 
+
+  }, (error) => { 
+
+    console.error('Firebase fetch error:', error) 
+
+    loading.value = false 
+
+  }) 
+
+} 
+
+ 
+
+onMounted(fetchDevices) 
+
+ 
+
+const filteredDevices = computed(() => { 
+
+  if (!search.value) return devices.value 
+
+  return devices.value.filter(device => 
+
+    Object.values(device).some(value => 
+
+      String(value).toLowerCase().includes(search.value.toLowerCase()) 
+
+    ) 
+
+  ) 
+
+}) 
+
+ 
+
+const getStatusColor = (status) => { 
+
+  switch (status?.toLowerCase()) { 
+
+    case 'online': return 'green' 
+
+    case 'offline': return 'red' 
+
+    case 'maintenance': return 'orange' 
+
+    default: return 'grey' 
+
+  } 
+
+} 
+
+</script> 
+
+ 
+
+<style scoped> 
+
+.text-teal { 
+
+  color: #009688; 
+
+} 
+
+ 
+
+.v-card { 
+
+  border-radius: 12px; 
+
+} 
+
+ 
+
+.v-data-table { 
+
+  background-color: white; 
+
+} 
+
+ 
+
+.v-chip { 
+
+  border-radius: 16px; 
+
+  font-weight: 500; 
+
+  font-size: 13px; 
+
+} 
+
+ 
+
+.search-input { 
+
+  width: 100%; 
+
+  max-width: 100%; 
+
+  border-radius: 8px; 
+
+} 
+
+ 
+
+.table-scroll { 
+
+  overflow-x: auto; 
+
+  width: 100%; 
+
+} 
+
+ 
+
+.v-container { 
+
+  max-width: 100%; 
+
+} 
+
+</style> 
+
+ 
+
+ 
+
+HISTORY.VUE CODE 
+
+ 
+
+<template> 
+
+  <v-app> 
+
+    <v-main> 
+
+      <v-container fluid class="pa-8" style="background-color: #E1F5FE; min-height: 100vh;"> 
+
+        <!-- Header Card --> 
+
+        <v-card class="mt-4"> 
+
+          <v-card-title class="text-h6 font-weight-bold text-teal d-flex justify-space-between align-center"> 
+
+            Batch History 
+
+            <v-btn icon @click="loadBatches" :disabled="loading" :title="'Refresh batches'"> 
+
+              <v-icon>mdi-refresh</v-icon> 
+
+            </v-btn> 
+
+          </v-card-title> 
+
+ 
+
+          <!-- Search Input --> 
+
+          <v-text-field 
+
+            v-model="search" 
+
+            label="Search Batches" 
+
+            class="search-input mb-4" 
+
+            outlined 
+
+            dense 
+
+            hide-details 
+
+            :style="searchStyle" 
+
+            clearable 
+
+          ></v-text-field> 
+
+ 
+
+          <!-- Print Button --> 
+
+          <v-btn @click="printTable" color="primary" class="mb-4" :loading="loading" :disabled="loading"> 
+
+            Print 
+
+          </v-btn> 
+
+ 
+
+          <!-- Loading & Error --> 
+
+          <v-alert 
+
+            v-if="error" 
+
+            type="error" 
+
+            dense 
+
+            class="mb-4" 
+
+          > 
+
+            {{ error }} 
+
+          </v-alert> 
+
+          <v-progress-linear 
+
+            v-if="loading" 
+
+            indeterminate 
+
+            color="teal" 
+
+            class="mb-4" 
+
+          ></v-progress-linear> 
+
+ 
+
+          <!-- Scrollable Table --> 
+
+          <div class="table-wrapper"> 
+
+            <v-data-table 
+
+              :headers="headers" 
+
+              :items="filteredBatches" 
+
+              class="elevation-1" 
+
+              item-value="batchId" 
+
+              dense 
+
+              :loading="loading" 
+
+              loading-text="Loading batches..." 
+
+              :items-per-page="10" 
+
+              :key="batches.length" 
+
+            > 
+
+              <!-- Batch ID --> 
+
+              <template v-slot:[`item.batchId`]="{ item }"> 
+
+                {{ item.batchId }} 
+
+              </template> 
+
+ 
+
+              <!-- Items count --> 
+
+              <template v-slot:[`item.items`]="{ item }"> 
+
+                {{ item.items.length }} 
+
+              </template> 
+
+ 
+
+              <!-- Start Time --> 
+
+              <template v-slot:[`item.startTime`]="{ item }"> 
+
+                {{ formatDate(item.startTime) }} 
+
+              </template> 
+
+ 
+
+              <!-- End Time --> 
+
+              <template v-slot:[`item.endTime`]="{ item }"> 
+
+                {{ formatDate(item.endTime) }} 
+
+              </template> 
+
+ 
+
+              <!-- Duration --> 
+
+              <template v-slot:[`item.duration`]="{ item }"> 
+
+                {{ getDuration(item.startTime, item.endTime) }} 
+
+              </template> 
+
+ 
+
+              <!-- Status with color chip --> 
+
+              <template v-slot:[`item.status`]="{ item }"> 
+
+                <v-chip 
+
+                  :color="getStatusColor(item.status)" 
+
+                  text-color="white" 
+
+                  size="small" 
+
+                > 
+
+                  {{ item.status }} 
+
+                </v-chip> 
+
+              </template> 
+
+            </v-data-table> 
+
+          </div> 
+
+        </v-card> 
+
+      </v-container> 
+
+    </v-main> 
+
+  </v-app> 
+
+</template> 
+
+ 
+
+<script setup> 
+
+import { ref, computed, onMounted } from 'vue' 
+
+import { collection, getDocs } from 'firebase/firestore' 
+
+import { db } from '@/firebase' 
+
+ 
+
+const headers = [ 
+
+  { text: 'Batch ID', value: 'batchId' }, 
+
+  { text: 'Items', value: 'items' }, 
+
+  { text: 'Start Time', value: 'startTime' }, 
+
+  { text: 'End Time', value: 'endTime' }, 
+
+  { text: 'Duration', value: 'duration' }, 
+
+  { text: 'Status', value: 'status' } 
+
+] 
+
+ 
+
+const batches = ref([]) 
+
+const search = ref('') 
+
+const loading = ref(false) 
+
+const error = ref(null) 
+
+ 
+
+const loadBatches = async () => { 
+
+  loading.value = true 
+
+  error.value = null 
+
+  try { 
+
+    const snapshot = await getDocs(collection(db, 'batches')) 
+
+    batches.value = snapshot.docs.map(doc => { 
+
+      const data = doc.data() 
+
+      return { 
+
+        batchId: data.batchId || doc.id, 
+
+        items: data.items || [], 
+
+        startTime: data.startTime || null, 
+
+        endTime: data.endTime || null, 
+
+        status: data.status || 'Unknown' 
+
+      } 
+
+    }) 
+
+  } catch (err) { 
+
+    error.value = 'Failed to load batches: ' + err.message 
+
+  } finally { 
+
+    loading.value = false 
+
+  } 
+
+} 
+
+ 
+
+onMounted(() => { 
+
+  loadBatches() 
+
+}) 
+
+ 
+
+const filteredBatches = computed(() => { 
+
+  if (!search.value.trim()) return batches.value 
+
+  const term = search.value.toLowerCase().trim() 
+
+  return batches.value.filter(batch =>  
+
+    batch.batchId.toLowerCase().includes(term) || 
+
+    batch.status.toLowerCase().includes(term) 
+
+  ) 
+
+}) 
+
+ 
+
+const getStatusColor = (status) => { 
+
+  if (status === 'Completed') return 'green' 
+
+  if (status === 'In Progress') return 'orange' 
+
+  return 'grey' 
+
+} 
+
+ 
+
+// Safe date formatting, supporting Firestore Timestamp and JS Date objects 
+
+const formatDate = (timestamp) => { 
+
+  if (!timestamp) return 'N/A' 
+
+  let dateObj 
+
+  if (typeof timestamp.toDate === 'function') { 
+
+    // Firestore Timestamp 
+
+    dateObj = timestamp.toDate() 
+
+  } else if (timestamp instanceof Date) { 
+
+    dateObj = timestamp 
+
+  } else { 
+
+    return 'Invalid Date' 
+
+  } 
+
+  return dateObj.toLocaleString() 
+
+} 
+
+ 
+
+const getDuration = (start, end) => { 
+
+  if (!start) return 'N/A' 
+
+  if (!end) return 'In Progress' 
+
+  let startDate = (typeof start.toDate === 'function') ? start.toDate() : start 
+
+  let endDate = (typeof end.toDate === 'function') ? end.toDate() : end 
+
+  const diffMs = endDate - startDate 
+
+  const diffMins = Math.floor(diffMs / 60000) 
+
+  return `${diffMins} mins` 
+
+} 
+
+ 
+
+const printTable = () => { 
+
+  const printContent = document.querySelector('.v-data-table') 
+
+  if (!printContent) return 
+
+ 
+
+  const styles = ` 
+
+    <style> 
+
+      body { font-family: Arial, sans-serif; font-size: 14px; padding: 10px; } 
+
+      table { width: 100%; border-collapse: collapse; } 
+
+      th, td { padding: 8px; border: 1px solid #ddd; text-align: left; } 
+
+      .v-chip { border-radius: 4px; padding: 4px 8px; color: white; } 
+
+      .v-chip.green { background-color: #4caf50; } 
+
+      .v-chip.orange { background-color: #ff9800; } 
+
+      .v-chip.grey { background-color: #9e9e9e; } 
+
+    </style> 
+
+  ` 
+
+ 
+
+  const newWin = window.open('', '', 'width=900,height=600') 
+
+  newWin.document.write('<html><head><title>Batch History</title>') 
+
+  newWin.document.write(styles) 
+
+  newWin.document.write('</head><body>') 
+
+  newWin.document.write(printContent.outerHTML) 
+
+  newWin.document.write('</body></html>') 
+
+  newWin.document.close() 
+
+  newWin.focus() 
+
+  newWin.print() 
+
+  newWin.close() 
+
+} 
+
+ 
+
+const searchStyle = { 
+
+  maxWidth: '500px', 
+
+  marginBottom: '16px', 
+
+  borderRadius: '8px', 
+
+} 
+
+</script> 
+
+ 
+
+<style scoped> 
+
+.text-teal { 
+
+  color: #009688; 
+
+} 
+
+ 
+
+.v-btn { 
+
+  transition: background-color 0.3s ease; 
+
+} 
+
+ 
+
+.v-btn:hover { 
+
+  background-color: rgba(255, 255, 255, 0.1); 
+
+} 
+
+ 
+
+.v-card { 
+
+  border-radius: 12px; 
+
+} 
+
+ 
+
+.v-chip { 
+
+  border-radius: 16px; 
+
+} 
+
+ 
+
+.v-container { 
+
+  max-width: 100%; 
+
+} 
+
+ 
+
+/* Search Field Styling */ 
+
+.search-input { 
+
+  max-width: 500px; 
+
+  margin-bottom: 16px; 
+
+  border-radius: 8px; 
+
+} 
+
+ 
+
+.search-input .v-text-field__control { 
+
+  padding-right: 12px; 
+
+} 
+
+ 
+
+.search-input .v-text-field__prepend-inner { 
+
+  padding-left: 12px; 
+
+} 
+
+ 
+
+.search-input .v-text-field__control:focus-within { 
+
+  border-color: #009688; 
+
+} 
+
+ 
+
+/* Table Scroll Wrapper */ 
+
+.table-wrapper { 
+
+  width: 100%; 
+
+  overflow-x: auto; 
+
+} 
+
+ 
+
+.v-data-table { 
+
+  min-width: 900px; 
+
+  background-color: white; 
+
+} 
+
+</style> 
+
+ 
+
+ 
+
+FIREBASE.JS 
+
+ 
+
+import { initializeApp } from 'firebase/app'; 
+
+import { 
+
+  getAuth, 
+
+  GoogleAuthProvider, 
+
+  signInWithPopup, 
+
+  signOut, 
+
+  onAuthStateChanged, 
+
+  createUserWithEmailAndPassword, 
+
+  signInWithEmailAndPassword 
+
+} from 'firebase/auth'; 
+
+import { 
+
+  getFirestore, 
+
+  doc, 
+
+  getDoc, 
+
+  setDoc, 
+
+  updateDoc, 
+
+  arrayUnion, 
+
+  Timestamp, 
+
+  collection // <-- added collection import here for usage if needed 
+
+} from 'firebase/firestore'; 
+
+import { 
+
+  getDatabase, 
+
+  ref as dbRef, 
+
+  set as rtdbSet 
+
+} from 'firebase/database'; 
+
+ 
+
+// Initialize Firebase app 
+
+const firebaseConfig = { 
+
+  apiKey: "AIzaSyBlagWot02c8JxVZbQi2LoG-bmEXmRR1qY", 
+
+  authDomain: "tnpfinals.firebaseapp.com", 
+
+  databaseURL: "https://tnpfinals-default-rtdb.firebaseio.com", 
+
+  projectId: "tnpfinals", 
+
+  storageBucket: "tnpfinals.firebasestorage.app", 
+
+  messagingSenderId: "403158358763", 
+
+  appId: "1:403158358763:web:c76cf2391513917f643cae", 
+
+  measurementId: "G-Z74BZGVVM8" 
+
+}; 
+
+ 
+
+const app = initializeApp(firebaseConfig); 
+
+ 
+
+// Firebase services setup 
+
+const auth = getAuth(app); 
+
+const provider = new GoogleAuthProvider(); 
+
+const db = getFirestore(app); 
+
+const rtdb = getDatabase(app); // ✅ Required for Vue Realtime Database connection 
+
+ 
+
+// Function to detect device type based on user agent 
+
+const getDeviceType = () => { 
+
+  const userAgent = navigator.userAgent.toLowerCase(); 
+
+  if (userAgent.includes('mobile')) return 'Phone'; 
+
+  if (userAgent.includes('tablet')) return 'Tablet'; 
+
+  if (userAgent.includes('laptop') || userAgent.includes('macintosh') || userAgent.includes('windows')) return 'Laptop/PC'; 
+
+  return 'Unknown'; 
+
+}; 
+
+ 
+
+// Register web or user device (PC, phone, tablet) in Firestore 
+
+const registerDevice = async (user) => { 
+
+  try { 
+
+    const deviceType = getDeviceType(); 
+
+    const deviceRef = doc(db, 'Devices', user.uid); 
+
+    const docSnap = await getDoc(deviceRef); 
+
+ 
+
+    if (docSnap.exists()) { 
+
+      await updateDoc(deviceRef, { 
+
+        deviceTypes: arrayUnion(deviceType), 
+
+        lastUpdatedAt: Timestamp.now() 
+
+      }); 
+
+    } else { 
+
+      await setDoc(deviceRef, { 
+
+        deviceTypes: [deviceType], 
+
+        registeredAt: Timestamp.now(), 
+
+        userID: user.uid 
+
+      }); 
+
+    } 
+
+ 
+
+    console.log('Web/PC/Phone device registered successfully'); 
+
+  } catch (error) { 
+
+    console.error('Error registering device in Firestore:', error); 
+
+  } 
+
+}; 
+
+ 
+
+// Optional: Function to register ESP32 or IoT device to Realtime Database 
+
+const registerESP32Device = async (deviceId, name = 'ESP32 Sensor Node', location = 'Lab Room', status = 'online') => { 
+
+  try { 
+
+    const path = `/devices/${deviceId}`; 
+
+ 
+
+    await rtdbSet(dbRef(rtdb, `${path}/id`), deviceId); 
+
+    await rtdbSet(dbRef(rtdb, `${path}/name`), name); 
+
+    await rtdbSet(dbRef(rtdb, `${path}/location`), location); 
+
+    await rtdbSet(dbRef(rtdb, `${path}/status`), status); 
+
+    await rtdbSet(dbRef(rtdb, `${path}/registeredOn`), String(Date.now())); 
+
+ 
+
+    console.log('ESP32 device registered in Realtime Database'); 
+
+  } catch (error) { 
+
+    console.error('Error registering ESP32 device:', error); 
+
+  } 
+
+}; 
+
+ 
+
+// Export Firebase instances and functions 
+
+export { 
+
+  auth, 
+
+  provider, 
+
+  signInWithPopup, 
+
+  signOut, 
+
+  onAuthStateChanged, 
+
+  createUserWithEmailAndPassword, 
+
+  signInWithEmailAndPassword, 
+
+  registerDevice, 
+
+  registerESP32Device, 
+
+  rtdb, // ✅ Exported for use in frontend (Vue app) 
+
+  db,   // ✅ Firestore instance export (added) 
+
+  collection // optionally export collection if you want to import it from here later 
+
+}; 
+
+ 
+
+ 
